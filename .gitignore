@@ -1,0 +1,21 @@
+# Visual Studio
+.vs/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Temporary files
+temp/
+*.tmp
+*.temp
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
