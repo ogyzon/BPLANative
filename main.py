@@ -19,7 +19,7 @@ class CustomVideoPlayer:
     
     def __init__(self, parent, app, width=640, height=480, on_frame_callback=None):
         self.parent = parent
-        self.parent_app = app  # Reference to main App
+        self.parent_app = app
         self.width = width
         self.height = height
         self.on_frame_callback = on_frame_callback
@@ -51,7 +51,7 @@ class CustomVideoPlayer:
         self.time_label = tk.Label(self.control_frame, text="00:00 / 00:00")
         self.time_label.pack(side=tk.RIGHT, padx=5)
         
-        # Video state
+        # Состояние видео
         self.cap = None
         self.video_path = None
         self.total_frames = 0
@@ -62,15 +62,16 @@ class CustomVideoPlayer:
         self.stop_thread = False
         self.current_photo = None
         
-        # Overlay data (points to draw)
-        self.match_points = []              # Points on video frame
-        self.satellite_match_points = []    # Corresponding points on satellite
-        self.homography_matrix = None       # Transformation matrix for drawing lines
+        #Данные
+        self.match_points = []
+        self.satellite_match_points = []
+        self.homography_matrix = None
         
         self.update_display()
     
+    #Загрузка видео (открытие чз OpenCv)
     def load(self, video_path):
-        """Load video file"""
+        
         self.video_path = video_path
         self.cap = cv2.VideoCapture(video_path)
         
@@ -80,6 +81,7 @@ class CustomVideoPlayer:
         
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+
         if self.fps <= 0:
             self.fps = 30
         
@@ -89,94 +91,81 @@ class CustomVideoPlayer:
         print(f"Video loaded: {self.total_frames} frames, {self.fps:.1f} FPS")
         return True
     
+    #Отрисовка линий на комбинированном изображении с видео
     def draw_combined_with_lines(self, video_frame, sat_image, video_points, sat_points, H=None, max_lines=20):
-        """
-        Create a combined image with satellite on left, video on right,
-        and draw lines between matching points.
-        If H (homography) is provided, also draw projected bounding box.
-        """
-        # Convert satellite PIL image to numpy array
+
+        #Конверт спутника из PIL в numpy
         sat_np = np.array(sat_image.convert('RGB'))
         sat_np = cv2.cvtColor(sat_np, cv2.COLOR_RGB2BGR)
         
-        # Resize satellite to match video frame height proportionally
+        #Ресайз спутник для метча с размерами видео
         sat_h, sat_w = sat_np.shape[:2]
         video_h, video_w = video_frame.shape[:2]
-        
-        # Scale satellite to same height as video
         scale = video_h / sat_h
         new_sat_w = int(sat_w * scale)
         sat_resized = cv2.resize(sat_np, (new_sat_w, video_h))
         
-        # Create combined image (satellite left, video right)
+        #Создание комбо фото и видео
         combined = np.zeros((video_h, new_sat_w + video_w, 3), dtype=np.uint8)
         combined[:, :new_sat_w] = sat_resized
         combined[:, new_sat_w:] = video_frame
         
-        # Scale satellite points to match resized satellite image
+        #Скейлим ключевые у спутника
         if len(sat_points) > 0:
             sat_points_scaled = sat_points * [scale, scale]
         else:
             sat_points_scaled = []
         
-        # Number of lines to draw
+        #Рисуем линии 
         num_lines = min(len(video_points), max_lines)
-        
+
         for i in range(num_lines):
+
             if i < len(sat_points_scaled) and i < len(video_points):
+
                 x1, y1 = sat_points_scaled[i]
                 x2, y2 = video_points[i]
                 
-                # Draw green circle on satellite
                 cv2.circle(combined, (int(x1), int(y1)), 5, (0, 255, 0), -1)
-                
-                # Draw red circle on video (offset by satellite width)
                 cv2.circle(combined, (int(x2 + new_sat_w), int(y2)), 5, (0, 0, 255), -1)
-                
-                # Draw blue line between them
                 cv2.line(combined, (int(x1), int(y1)), (int(x2 + new_sat_w), int(y2)), (255, 0, 0), 2)
         
-        # If we have homography, draw projected satellite corners on video
-        if H is not None and sat_points_scaled is not None and len(sat_points_scaled) >= 4:
-            # Draw text showing RANSAC worked
+        #H - гомографическая матрица
+        if H is not None and len(sat_points_scaled) >= 4:
             cv2.putText(combined, "RANSAC: OK", (new_sat_w + 10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
         return combined
     
+    #Показываем кокнретный кадр на экране 
     def show_frame(self, frame_num):
-        """Display a specific frame with overlay and lines"""
+  
         if self.cap is None:
             return
         
+        #Читаем кадр из видео
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = self.cap.read()
         
         if not ret:
             return
         
-        # If we have matches, draw combined image with lines
+        #Если есть точки для отрисовки, вызываем рисову линий в комбо
         if len(self.match_points) >= 4 and len(self.satellite_match_points) >= 4 and self.parent_app.satellite_img is not None:
             combined = self.draw_combined_with_lines(
-                frame, 
-                self.parent_app.satellite_img,
-                self.match_points, 
-                self.satellite_match_points,
-                self.homography_matrix,
-                max_lines=20
+                frame, self.parent_app.satellite_img,
+                self.match_points, self.satellite_match_points,
+                self.homography_matrix, max_lines=20
             )
             display_frame = combined
         else:
-            # Just show video frame
             display_frame = frame
-            # Still draw points on video if any
             for (x, y) in self.match_points:
                 cv2.circle(display_frame, (int(x), int(y)), 4, (0, 255, 0), -1)
         
-        # Convert for display
+        # Конвертация для дисплея
         display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
         
-        # Get canvas size
         canvas_w = self.canvas.winfo_width()
         canvas_h = self.canvas.winfo_height()
         
@@ -189,7 +178,6 @@ class CustomVideoPlayer:
         else:
             new_w, new_h = display_rgb.shape[1], display_rgb.shape[0]
         
-        # Display
         img = Image.fromarray(display_rgb)
         self.current_photo = ImageTk.PhotoImage(img)
         
@@ -198,19 +186,19 @@ class CustomVideoPlayer:
         y = (canvas_h - new_h) // 2 if canvas_h > 1 else 0
         self.canvas.create_image(x, y, image=self.current_photo, anchor=tk.NW)
         
-        # Update time label
         current_time = frame_num / self.fps if self.fps > 0 else 0
         total_time = self.total_frames / self.fps if self.fps > 0 else 0
         self.time_label.config(text=f"{self._format_time(current_time)} / {self._format_time(total_time)}")
     
     def _format_time(self, seconds):
-        """Format seconds to MM:SS"""
         m = int(seconds // 60)
         s = int(seconds % 60)
         return f"{m:02d}:{s:02d}"
     
+    #Главный цикл воспроизведения
     def update_display(self):
-        """Update display periodically (playback loop)"""
+
+        #Увеличиваем номер кадра если видео играет
         if self.is_playing and self.cap is not None:
             self.current_frame += 1
             if self.current_frame >= self.total_frames:
@@ -220,46 +208,42 @@ class CustomVideoPlayer:
             if self.total_frames > 0:
                 self.seek_scale.set(int(self.current_frame / self.total_frames * 100))
             
-            # Call callback for frame processing
+            #Обрабатываем каждый 5 кадр (%5)
             if self.on_frame_callback and self.current_frame % 5 == 0:
                 self.on_frame_callback(self.current_frame)
         
         self.parent.after(33, self.update_display)
     
     def set_match_points(self, video_points, satellite_points, H=None):
-        """Set points to draw (called from matching thread)"""
+
         self.match_points = video_points
         self.satellite_match_points = satellite_points
         self.homography_matrix = H
-        # Redraw current frame with new points
+
         if self.cap is not None:
             self.show_frame(self.current_frame)
     
+    #Функции плеера
     def play(self):
-        """Start playback"""
         if self.cap is not None and not self.is_playing:
             self.is_playing = True
     
     def pause(self):
-        """Pause playback"""
         self.is_playing = False
     
     def stop(self):
-        """Stop and reset to beginning"""
         self.is_playing = False
         self.current_frame = 0
         self.show_frame(0)
         self.seek_scale.set(0)
     
     def seek(self, value):
-        """Seek to position"""
         if self.cap is None or self.total_frames <= 0:
             return
         self.current_frame = int(int(value) / 100 * self.total_frames)
         self.show_frame(self.current_frame)
     
     def close(self):
-        """Release resources"""
         self.is_playing = False
         if self.cap:
             self.cap.release()
@@ -269,14 +253,12 @@ class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("BPLA - Satellite to Drone Matching")
-        self.root.geometry("1200x700")
+        self.root.geometry("1200x750")
         
-        # Configure grid weights for resizing
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_columnconfigure(1, weight=1)
         
-        # Left panel - Satellite photo
         left_frame = tk.LabelFrame(self.root, text="Satellite Image", font=("Arial", 10, "bold"))
         left_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         left_frame.grid_rowconfigure(0, weight=1)
@@ -285,7 +267,6 @@ class App:
         self.photo_canvas = tk.Canvas(left_frame, bg='gray', highlightthickness=0)
         self.photo_canvas.grid(row=0, column=0, sticky="nsew")
         
-        # Right panel - Video player
         right_frame = tk.LabelFrame(self.root, text="Drone Video", font=("Arial", 10, "bold"))
         right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         right_frame.grid_rowconfigure(0, weight=1)
@@ -293,49 +274,72 @@ class App:
         
         self.video_player = CustomVideoPlayer(right_frame, self, width=640, height=480, on_frame_callback=self.process_frame_background)
         
-        # Bottom panel - Buttons
         btn_frame = tk.Frame(self.root)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10)
         
-        self.btn_load_photo = tk.Button(btn_frame, text="Load Satellite Photo", command=self.load_photo, width=20)
-        self.btn_load_photo.pack(side=tk.LEFT, padx=10)
+        self.btn_load_photo = tk.Button(btn_frame, text="Load Satellite Photo", command=self.load_photo, width=18)
+        self.btn_load_photo.pack(side=tk.LEFT, padx=5)
         
-        self.btn_load_video = tk.Button(btn_frame, text="Load Video", command=self.load_video, width=15)
-        self.btn_load_video.pack(side=tk.LEFT, padx=10)
+        self.btn_load_video = tk.Button(btn_frame, text="Load Video", command=self.load_video, width=12)
+        self.btn_load_video.pack(side=tk.LEFT, padx=5)
         
-        # RANSAC settings
-        self.ransac_threshold = 3.0
+        # RANSAC threshold слайдер
         tk.Label(btn_frame, text="RANSAC threshold:").pack(side=tk.LEFT, padx=(20,5))
-        self.ransac_slider = tk.Scale(btn_frame, from_=1.0, to=10.0, orient=tk.HORIZONTAL, 
-                                       resolution=0.5, length=150, command=self.update_ransac_threshold)
+        self.ransac_slider = tk.Scale(btn_frame, from_=1.0, to=10.0, orient=tk.HORIZONTAL,
+                                       resolution=0.5, length=120, command=self.update_ransac_threshold)
         self.ransac_slider.set(3.0)
         self.ransac_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Слайдер макс расстояния от центра до группы точек
+        tk.Label(btn_frame, text="Max scatter (px):").pack(side=tk.LEFT, padx=(20,5))
+        self.scatter_slider = tk.Scale(btn_frame, from_=50, to=300, orient=tk.HORIZONTAL,
+                                        resolution=10, length=120, command=self.update_scatter_threshold)
+        self.scatter_slider.set(150)
+        self.scatter_slider.pack(side=tk.LEFT, padx=5)
+        
+        #Коэф уверенности
+        tk.Label(btn_frame, text="Confidence:").pack(side=tk.LEFT, padx=(20,5))
+        self.conf_slider = tk.Scale(btn_frame, from_=0.5, to=0.95, orient=tk.HORIZONTAL,
+                                     resolution=0.05, length=120, command=self.update_conf_threshold)
+        self.conf_slider.set(0.75)
+        self.conf_slider.pack(side=tk.LEFT, padx=5)
         
         self.status_label = tk.Label(btn_frame, text="Ready", font=("Arial", 9))
         self.status_label.pack(side=tk.LEFT, padx=20)
         
-        # AI Models
+        #AI
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.extractor = None
         self.matcher = None
         self.satellite_feats = None
         self.satellite_img = None
         self.satellite_keypoints = None
-        self.satellite_display_photo = None
         
-        # Matching thread
+        #Параметры по умолчанию
+        self.ransac_threshold = 3.0
+        self.max_scatter_distance = 150
+        self.confidence_threshold = 0.75
+        
+        #Мэтч поток
         self.matching_thread = None
         self.last_frame_processed = -1
         
         self.load_ai()
     
     def update_ransac_threshold(self, value):
-        """Update RANSAC threshold from slider"""
         self.ransac_threshold = float(value)
-        self.status_label.config(text=f"RANSAC threshold: {self.ransac_threshold}")
+        self.status_label.config(text=f"RANSAC: {self.ransac_threshold}")
     
+    def update_scatter_threshold(self, value):
+        self.max_scatter_distance = float(value)
+        self.status_label.config(text=f"Scatter: {self.max_scatter_distance}px")
+    
+    def update_conf_threshold(self, value):
+        self.confidence_threshold = float(value)
+        self.status_label.config(text=f"Confidence: {self.confidence_threshold}")
+    
+    #Загрузка иишек
     def load_ai(self):
-        """Load neural networks"""
         self.status_label.config(text="Loading AI...")
         self.root.update()
         
@@ -345,8 +349,8 @@ class App:
         self.status_label.config(text=f"AI ready on {self.device}")
         print(f"AI loaded on {self.device}")
     
+    #Загрузка фото
     def load_photo(self):
-        """Load satellite photo"""
         path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg")])
         if not path:
             return
@@ -357,6 +361,7 @@ class App:
         self.status_label.config(text="Extracting satellite features...")
         self.root.update()
         
+        #Извлечение ключей
         self.satellite_feats = self.extract_features(self.satellite_img)
         self.satellite_keypoints = self.extract_keypoints(self.satellite_img)
         
@@ -365,25 +370,32 @@ class App:
         self.status_label.config(text=f"Satellite ready: {len(self.satellite_keypoints)} keypoints")
         print(f"Found {len(self.satellite_keypoints)} keypoints")
     
+    #Ф-ция извлечения признаков сопоставления (ключи и дескрипторы)
     def extract_features(self, img):
-        """Extract full features for LightGlue matching"""
+
         img_np = np.array(img.convert('RGB'))
         tensor = transforms.ToTensor()(img_np).unsqueeze(0).to(self.device)
+
         with torch.no_grad():
             feats = self.extractor.extract(tensor)
+
         return feats
     
+    #Ф-ция извлечения ключей
     def extract_keypoints(self, img):
-        """Extract only keypoint coordinates"""
+
         img_np = np.array(img.convert('RGB'))
         tensor = transforms.ToTensor()(img_np).unsqueeze(0).to(self.device)
+
         with torch.no_grad():
             feats = self.extractor.extract(tensor)
         feats = rbd(feats)
+
         return feats['keypoints'].cpu().numpy()
     
+    #Отображаем фото с добавленными поверх ключами (максимум поставили 100)
     def display_photo_with_keypoints(self, keypoints, max_points=100):
-        """Display satellite photo with green keypoints"""
+
         canvas_w = self.photo_canvas.winfo_width()
         canvas_h = self.photo_canvas.winfo_height()
         
@@ -406,8 +418,8 @@ class App:
         y = (canvas_h - img_copy.height) // 2
         self.photo_canvas.create_image(x, y, image=self.satellite_display_photo, anchor=tk.NW)
     
+    #Загрузка видео
     def load_video(self):
-        """Load video into player"""
         path = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.avi *.mov *.mkv *.webm")])
         if not path:
             return
@@ -415,8 +427,10 @@ class App:
         self.video_player.load(path)
         self.status_label.config(text="Video loaded. Click Play to start")
     
+    #Фоновая обработка. Вызывается из плеера каждый 5 кадр
     def process_frame_background(self, frame_num):
-        """Called from video player for each frame - starts background processing"""
+
+
         if self.satellite_feats is None:
             return
         
@@ -425,6 +439,7 @@ class App:
         
         self.last_frame_processed = frame_num
         
+        #Запускат в отдельном потоке match frame in bg
         if self.matching_thread is None or not self.matching_thread.is_alive():
             self.matching_thread = threading.Thread(
                 target=self.match_frame_in_background,
@@ -433,29 +448,15 @@ class App:
             )
             self.matching_thread.start()
     
+    #Ранзак фильтрация
     def ransac_filter(self, pts_sat, pts_frame, threshold=3.0, max_iter=2000):
-        """
-        Filter incorrect matches using RANSAC.
-        
-        Parameters:
-        - pts_sat: points on satellite image (N, 2)
-        - pts_frame: corresponding points on video frame (N, 2)
-        - threshold: maximum allowed reprojection error (pixels)
-        - max_iter: maximum number of RANSAC iterations
-        
-        Returns:
-        - filtered_pts_sat: geometrically consistent points on satellite
-        - filtered_pts_frame: corresponding points on video
-        - H: homography matrix (transformation from satellite to frame)
-        """
+
         if len(pts_sat) < 4:
             return pts_sat, pts_frame, None
         
-        # Convert to proper format for OpenCV
         src_pts = pts_sat.reshape(-1, 1, 2).astype(np.float32)
         dst_pts = pts_frame.reshape(-1, 1, 2).astype(np.float32)
         
-        # Find homography with RANSAC
         H, mask = cv2.findHomography(
             src_pts, dst_pts,
             method=cv2.RANSAC,
@@ -465,16 +466,30 @@ class App:
         )
         
         if H is not None and mask is not None:
-            # Convert mask to boolean array
             mask = mask.ravel().astype(bool)
-            filtered_pts_sat = pts_sat[mask]
-            filtered_pts_frame = pts_frame[mask]
-            return filtered_pts_sat, filtered_pts_frame, H
+            filtered_sat = pts_sat[mask]
+            filtered_frame = pts_frame[mask]
+            return filtered_sat, filtered_frame, H
         else:
             return pts_sat, pts_frame, None
     
+    def check_points_clustering(self, points, max_distance=150):
+
+        if len(points) < 3:
+            return False
+        
+        # Calculate center of points
+        center = np.mean(points, axis=0)
+        
+        # Calculate average distance from center
+        distances = np.linalg.norm(points - center, axis=1)
+        mean_distance = np.mean(distances)
+        
+        # Check if points are too scattered
+        return mean_distance < max_distance
+    
     def match_frame_in_background(self, frame_num):
-        """Heavy matching work in background thread with RANSAC"""
+        """Background matching with RANSAC and clustering check"""
         cap = cv2.VideoCapture(self.video_player.video_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
@@ -483,30 +498,45 @@ class App:
         if not ret:
             return
         
-        # Get matches from LightGlue
         video_points_raw, sat_points_raw = self.match_frame(frame)
         
-        if len(video_points_raw) < 4:
+        if len(video_points_raw) < 8:
             self.root.after(0, lambda: self.video_player.set_match_points([], [], None))
             return
         
         # Apply RANSAC filter
-        sat_points_filtered, video_points_filtered, H = self.ransac_filter(
+        sat_points_filt, video_points_filt, H = self.ransac_filter(
             sat_points_raw, video_points_raw, threshold=self.ransac_threshold
         )
         
-        print(f"Frame {frame_num}: Raw={len(video_points_raw)} -> Filtered={len(video_points_filtered)}")
-        
-        if len(video_points_filtered) >= 4:
+        # Additional check: points should be clustered
+        if len(video_points_filt) >= 4:
+            # Check scatter distance
+            is_clustered = self.check_points_clustering(video_points_filt, self.max_scatter_distance)
+            
+            if not is_clustered:
+                print(f"Frame {frame_num}: Points too scattered - rejecting")
+                self.root.after(0, lambda: self.video_player.set_match_points([], [], None))
+                return
+            
+            # Also check satellite points clustering
+            is_sat_clustered = self.check_points_clustering(sat_points_filt, self.max_scatter_distance * 2)
+            
+            if not is_sat_clustered:
+                print(f"Frame {frame_num}: Satellite points too scattered - rejecting")
+                self.root.after(0, lambda: self.video_player.set_match_points([], [], None))
+                return
+            
+            print(f"Frame {frame_num}: ACCEPTED {len(video_points_filt)} matches (scatter: clustered)")
             self.root.after(0, lambda: self.video_player.set_match_points(
-                video_points_filtered, sat_points_filtered, H
+                video_points_filt, sat_points_filt, H
             ))
+        else:
+            print(f"Frame {frame_num}: Not enough matches after RANSAC: {len(video_points_filt)}")
+            self.root.after(0, lambda: self.video_player.set_match_points([], [], None))
     
     def match_frame(self, frame):
-        """
-        Match a single video frame with satellite image.
-        Returns: (video_points, satellite_points) - matched point coordinates
-        """
+        """Match frame with satellite using SuperPoint and LightGlue"""
         h, w = frame.shape[:2]
         
         # Resize for speed
@@ -530,7 +560,7 @@ class App:
         with torch.no_grad():
             frame_feats = self.extractor.extract(tensor)
         
-        # Match with satellite using LightGlue
+        # Match with satellite
         with torch.no_grad():
             matches = self.matcher({"image0": self.satellite_feats, "image1": frame_feats})
         
@@ -539,6 +569,14 @@ class App:
         kpts_sat = self.satellite_feats["keypoints"][0].cpu().numpy()
         kpts_frame = frame_feats["keypoints"][0].cpu().numpy()
         matches_idx = matches["matches"].cpu().numpy()
+        scores = matches["scores"].cpu().numpy()
+        
+        if len(matches_idx) < 4:
+            return [], []
+        
+        # Filter by confidence threshold
+        conf_mask = scores > self.confidence_threshold
+        matches_idx = matches_idx[conf_mask]
         
         if len(matches_idx) < 4:
             return [], []
