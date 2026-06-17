@@ -9,6 +9,7 @@ import torchvision.transforms as transforms
 from lightglue import SuperPoint, LightGlue
 from lightglue.utils import rbd
 import threading
+import time
 
 
 class CustomVideoPlayer:
@@ -58,9 +59,12 @@ class CustomVideoPlayer:
         self.current_photo = None
         
         # Данные для отрисовки совпадений
-        self.match_points = []              # Точки на видео
-        self.satellite_match_points = []    # Соответствующие точки на спутнике
-        self.homography_matrix = None       # Матрица гомографии
+        self.match_points = []
+        self.satellite_match_points = []
+        self.homography_matrix = None
+        
+        # ОПТИМИЗАЦИЯ: Флаг, что есть новые точки для отрисовки
+        self.new_matches_available = False
         
         self.update_display()
     
@@ -95,13 +99,15 @@ class CustomVideoPlayer:
         if not ret:
             return
         
-        # Рисуем зелёные точки на видео в местах совпадений
-        display_frame = frame.copy()
+        # ОПТИМИЗАЦИЯ: Создаём копию только если есть точки
         if len(self.match_points) >= 4:
+            display_frame = frame.copy()
             for (x, y) in self.match_points:
                 cv2.circle(display_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
             cv2.putText(display_frame, f"Matches: {len(self.match_points)}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            display_frame = frame
         
         # Если есть совпадения и открыто окно сопоставления — обновляем его
         if len(self.match_points) >= 4 and self.parent_app.match_window is not None:
@@ -151,8 +157,8 @@ class CustomVideoPlayer:
             if self.total_frames > 0:
                 self.seek_scale.set(int(self.current_frame / self.total_frames * 100))
             
-            # Обрабатываем каждый 5-й кадр (%5)
-            if self.on_frame_callback and self.current_frame % 5 == 0:
+            # ОПТИМИЗАЦИЯ: Обрабатываем каждый 10-й кадр (было 5)
+            if self.on_frame_callback and self.current_frame % 10 == 0:
                 self.on_frame_callback(self.current_frame)
         
         self.parent.after(33, self.update_display)
@@ -162,6 +168,7 @@ class CustomVideoPlayer:
         self.match_points = video_points
         self.satellite_match_points = satellite_points
         self.homography_matrix = H
+        # Перерисовываем только если есть видео
         if self.cap is not None:
             self.show_frame(self.current_frame)
     
@@ -257,6 +264,20 @@ class App:
         self.conf_slider.set(0.65)
         self.conf_slider.pack(side=tk.LEFT, padx=2)
         
+        # ОПТИМИЗАЦИЯ: Слайдер для пропуска кадров
+        tk.Label(btn_frame, text="Frame skip:").pack(side=tk.LEFT, padx=(10,2))
+        self.skip_slider = tk.Scale(btn_frame, from_=2, to=30, orient=tk.HORIZONTAL,
+                                     resolution=1, length=80, command=self.update_skip)
+        self.skip_slider.set(10)
+        self.skip_slider.pack(side=tk.LEFT, padx=2)
+        
+        # ОПТИМИЗАЦИЯ: Слайдер для размера кадра
+        tk.Label(btn_frame, text="Resize:").pack(side=tk.LEFT, padx=(10,2))
+        self.resize_slider = tk.Scale(btn_frame, from_=160, to=640, orient=tk.HORIZONTAL,
+                                       resolution=32, length=80, command=self.update_resize)
+        self.resize_slider.set(320)
+        self.resize_slider.pack(side=tk.LEFT, padx=2)
+        
         self.status_label = tk.Label(btn_frame, text="Ready", font=("Arial", 9))
         self.status_label.pack(side=tk.LEFT, padx=20)
         
@@ -272,6 +293,8 @@ class App:
         self.ransac_threshold = 4.0
         self.max_scatter_distance = 300
         self.confidence_threshold = 0.65
+        self.frame_skip = 10
+        self.target_size = 320
         
         # Окно сопоставления
         self.match_window = None
@@ -296,6 +319,14 @@ class App:
     def update_conf_threshold(self, value):
         self.confidence_threshold = float(value)
         self.status_label.config(text=f"Confidence: {self.confidence_threshold}")
+    
+    def update_skip(self, value):
+        self.frame_skip = int(value)
+        self.status_label.config(text=f"Skip: {self.frame_skip}")
+    
+    def update_resize(self, value):
+        self.target_size = int(value)
+        self.status_label.config(text=f"Resize: {self.target_size}")
     
     # --------------------- ОКНО СОПОСТАВЛЕНИЯ ---------------------
     
@@ -405,7 +436,8 @@ class App:
         self.status_label.config(text="Loading AI...")
         self.root.update()
         
-        self.extractor = SuperPoint(max_num_keypoints=2048).eval().to(self.device)
+        # ОПТИМИЗАЦИЯ: Уменьшено количество точек с 2048 до 1024
+        self.extractor = SuperPoint(max_num_keypoints=1024).eval().to(self.device)
         self.matcher = LightGlue(features="superpoint").eval().to(self.device)
         
         self.status_label.config(text=f"AI ready on {self.device}")
@@ -586,8 +618,8 @@ class App:
     def match_frame(self, frame):
         h, w = frame.shape[:2]
         
-        # Уменьшаем кадр для скорости
-        target = 480
+        # ОПТИМИЗАЦИЯ: Уменьшаем кадр сильнее (используем значение из слайдера)
+        target = self.target_size
         if max(h, w) > target:
             scale = target / max(h, w)
             new_w = int(w * scale)
